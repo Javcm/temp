@@ -1,0 +1,1917 @@
+Option Explicit
+
+Type Factor_Type
+    FatigueFactor As Single
+    RiskFactor As Single
+End Type
+
+Type Duty_Type
+    StartDay As Long
+    OnDuty As Double
+    OffDuty As Double
+    Cumulative As Factor_Type
+End Type
+
+Type Job_Type
+    JobWorkload As Long
+    JobAttention As Long
+    BreakFrequency As Single
+    BreakAverageLength As Single
+    ContinuousWorkLength As Single
+    BreakAfterContinuous As Single
+End Type
+Dim Duties() As Duty_Type
+Type CumDuty_Type
+        StartCommute As Double
+        EndCommute As Double
+        StartDay As Long
+        Night As Long
+        Night2 As Long
+        Lossn1 As Single
+        Loss2xg As Single
+        Ngtt As Long
+        StartHr As Single
+        Length As Single
+        Gap As Single
+        CR As Single
+        Risk As Single
+        PVT3 As Single
+        PVT4 As Single
+        PVTNext As Single
+End Type
+Type CumDay_Type
+        Night As Long
+        NextNight As Long
+        NightPVT As Single
+        PVTNext As Single
+End Type
+
+Const DayWidth = 240
+Const DayHeight = 15
+Const DayOffset = 800
+
+Global CommuteTime As Single
+Global JobWorkload As Long
+Global JobAttention As Long
+Global BreakFrequency As Single
+Global BreakAverageLength As Single
+Global ContinuousWorkLength As Single
+Global BreakAfterContinuous As Single
+
+Global Const FatigueCol = 12
+Global Const CumulativeCol = 9
+'Global Const FatigueCol = 12
+Function Cumulative(NumberOfDuties As Long)
+'This is a translation of two spreadsheet , hence the very steppy nature of the code
+'The translation is has not been optimized in any way
+
+Dim DutyCounter As Long
+Dim DayCount As Long
+Dim DayCounter As Long
+Dim EndHr As Single
+Dim Loss As Single
+Dim Lossc As Single
+Dim Loss1 As Single
+Dim Loss2 As Single
+Dim Lossn2 As Single
+Dim Loss2nc As Single
+Dim Loss2x As Single
+Dim Loss2xg As Single
+Dim Loss2g As Single
+Dim Lossn1 As Single
+Dim Lossn2c As Single
+Dim BedTime As Single
+Dim BedTimeX As Single
+Dim RKFit As Single
+Dim RKFitx As Single
+Dim AircrewFit As Single
+Dim Aircrewx As Single
+Dim EnxHr As Single
+Dim Night2x As Single
+Dim Lastn As Long
+Dim PVT As Single
+Dim PVT2 As Single
+Dim PVT3 As Single
+Dim PVT4 As Single
+Dim x As Single
+Dim PVTOut As Single
+Dim Sp As Single
+Dim Spcc As Single
+Dim pKss As Single
+Dim LGap As Single
+Dim Endd As Single
+Dim nd As Long
+Dim En1 As Single
+Dim St1 As Single
+Dim Sleep2 As Long
+Dim Nslp1 As Single
+Dim Nslp2 As Single
+Dim EndSleep As Single
+Dim StartSleep As Single
+Dim CumPVT As Single
+'Dim NextPVT As Single
+Dim Asymptote As Single
+Dim TotalLoss As Single
+Dim SecondNight As Long
+Dim NightPVT As Single
+Dim CumRisk As Single
+Dim CumDuty() As CumDuty_Type
+Dim CumDay() As CumDay_Type
+Dim n As Long
+ReDim CumDuty(NumberOfDuties)
+'load array with needed values
+On Error GoTo cumproblem
+For DutyCounter = 1 To NumberOfDuties
+    'Debug.Print Duties(DutyCounter).OnDuty, ((Duties(DutyCounter).OnDuty - Int(Duties(DutyCounter).OnDuty)) * 24)
+    CumDuty(DutyCounter).StartCommute = ((Duties(DutyCounter).OnDuty - Int(Duties(DutyCounter).OnDuty)) * 24) - (60 - 30) / 60
+    CumDuty(DutyCounter).StartDay = Duties(DutyCounter).StartDay
+    If CumDuty(DutyCounter).StartCommute < 15 Then
+        CumDuty(DutyCounter).Night = Duties(DutyCounter).StartDay
+    Else
+        CumDuty(DutyCounter).Night = Duties(DutyCounter).StartDay + 1
+    End If
+    If DutyCounter = NumberOfDuties Then
+        DayCount = CumDuty(DutyCounter).Night
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 1) = CumDuty(DutyCounter).StartDay
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 2) = ((Duties(DutyCounter).OnDuty - Int(Duties(DutyCounter).OnDuty)) * 24)
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 3) = ((Duties(DutyCounter).OffDuty - Int(Duties(DutyCounter).OffDuty)) * 24)
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 4) = CumDuty(DutyCounter).StartCommute
+Next DutyCounter
+ReDim CumDay(DayCount)
+
+For DutyCounter = 1 To NumberOfDuties
+     'this needs checking, the same as the spreadsheet, but is that correct? Commuting time 40 insted of 30 minutes                  **
+    CumDuty(DutyCounter).EndCommute = ((Duties(DutyCounter).OffDuty - Int(Duties(DutyCounter).OffDuty)) * 24) + (60 - 30) / 60
+    
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 5) = CumDuty(DutyCounter).EndCommute
+    If Round(CumDuty(DutyCounter).EndCommute, 2) > Round(CumDuty(DutyCounter).StartCommute, 2) Then
+        CumDuty(DutyCounter).Length = CumDuty(DutyCounter).EndCommute - CumDuty(DutyCounter).StartCommute
+    Else
+        CumDuty(DutyCounter).Length = (24 + CumDuty(DutyCounter).EndCommute) - CumDuty(DutyCounter).StartCommute
+    End If
+
+    If DutyCounter < NumberOfDuties Then
+        CumDuty(DutyCounter).Gap = 24 * (Duties(DutyCounter + 1).StartDay - Duties(DutyCounter).StartDay) + CumDuty(DutyCounter + 1).StartCommute - CumDuty(DutyCounter).StartCommute - CumDuty(DutyCounter).Length
+    Else
+        CumDuty(DutyCounter).Gap = 24
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 6) = CumDuty(DutyCounter).Gap
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 7) = CumDuty(DutyCounter).Night
+    CumDuty(DutyCounter).StartHr = CumDuty(DutyCounter).StartCommute + (Duties(DutyCounter).StartDay - CumDuty(DutyCounter).Night + 1) * 24
+    EndHr = CumDuty(DutyCounter).StartHr + CumDuty(DutyCounter).Length
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 8) = CumDuty(DutyCounter).StartHr
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 9) = CumDuty(DutyCounter).Length
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 10) = EndHr
+    If CumDuty(DutyCounter).StartHr > 22.76 Then
+        Loss1 = (0.03501 * (37.5 - CumDuty(DutyCounter).StartHr) + 0.01928) * (37.5 - CumDuty(DutyCounter).StartHr)
+    Else
+        Loss1 = 0
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 11) = Loss1
+    If EndHr < 24.25 Then
+        BedTime = 16.3 + 0.367 * EndHr
+    Else
+        BedTime = EndHr + 1
+    End If
+     'Worksheets("cumtest").Cells(DutyCounter + 1, 12) = BedTime
+    If EndHr < 18.5 Then
+        RKFit = 8.13
+    Else
+        RKFit = -2.28827436527851 + 11.7995318577367 / (1 + 0.472949055173571 * Exp(-1.77393493516727 + 0.16244804759197 * (BedTime - 20)))
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 13) = RKFit
+    If 8 - 0.285 * (EndHr - 18.5) < 8 Then
+        AircrewFit = 8 - 0.285 * (EndHr - 18.5)
+    Else
+        AircrewFit = 8
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 14) = AircrewFit
+    If 8.07 - (RKFit + AircrewFit) / 2 > 8 Then
+        Loss2 = 8
+    Else
+        Loss2 = 8.07 - (RKFit + AircrewFit) / 2
+    End If
+    If Loss2 < 9 - CumDuty(DutyCounter).Gap Then
+        Loss2g = 9 - CumDuty(DutyCounter).Gap
+    Else
+        Loss2g = Loss2
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 15) = Loss2
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 16) = Loss2g
+    If CumDuty(DutyCounter).StartHr >= 15 And CumDuty(DutyCounter).StartHr <= 22.67 Then
+        Lossn1 = Loss2g
+    Else
+        If Loss1 < Loss2g Then
+            Lossn1 = Loss1
+        Else
+            Lossn1 = Loss2g
+        End If
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 17) = CumDuty(DutyCounter).Night
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 18) = Lossn1
+    CumDuty(DutyCounter).Lossn1 = Lossn1
+    EnxHr = EndHr - 24
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 19) = EnxHr
+    If EnxHr < 24.25 Then
+        BedTimeX = 16.3 + 0.367 * EnxHr
+    Else
+        BedTimeX = EnxHr + 1
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 20) = BedTimeX
+    If EnxHr < 18.5 Then
+        RKFitx = 8.13
+    Else
+        RKFitx = -2.28827436527851 + 11.7995318577367 / (1 + 0.472949055173571 * Exp(-1.77393493516727 + 0.16244804759197 * (BedTimeX - 20)))
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 21) = RKFitx
+    If 8 < 8 - 0.285 * (EnxHr - 18.5) Then
+        Aircrewx = 8
+    Else
+        Aircrewx = 8 - 0.285 * (EnxHr - 18.5)
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 22) = Aircrewx
+    CumDuty(DutyCounter).Night2 = CumDuty(DutyCounter).Night + 1
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 23) = CumDuty(DutyCounter).Night2
+    If 8.07 - (RKFitx + Aircrewx) / 2 > 8 Then
+        Loss2x = 8
+    Else
+        Loss2x = 8.07 - (RKFitx + Aircrewx) / 2
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 24) = Loss2x
+    If Loss2x < 9 - CumDuty(DutyCounter).Gap Then
+        Loss2xg = 9 - CumDuty(DutyCounter).Gap
+    Else
+        Loss2xg = Loss2x
+    End If
+     'Worksheets("cumtest").Cells(DutyCounter + 1, 25) = Loss2xg
+    CumDuty(DutyCounter).Loss2xg = Loss2xg
+    If DutyCounter < NumberOfDuties Then
+        If CumDuty(DutyCounter + 1).Night = CumDuty(DutyCounter).Night Then
+            Lastn = 0
+        Else
+            Lastn = 1
+        End If
+    Else
+        Lastn = 1
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 26) = Lastn
+    If Lastn = 1 Then
+        CumDuty(DutyCounter).Ngtt = CumDuty(DutyCounter).Night
+    Else
+        CumDuty(DutyCounter).Ngtt = 0
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 27) = CumDuty(DutyCounter).Ngtt
+Next DutyCounter
+Dim found As Boolean
+'now do nightlookup
+For DayCounter = 1 To DayCount
+    
+    CumDay(DayCounter).Night = DayCounter
+    CumDay(DayCounter).NextNight = DayCounter + 1
+    'Worksheets("daytest").Cells(DayCounter + 1, 1) = CumDay(DayCounter).Night
+    'Worksheets("daytest").Cells(DayCounter + 1, 2) = CumDay(DayCounter).NextNight
+    'look up loss value where day number = night value
+    Loss = -99
+    For n = 1 To NumberOfDuties
+        If DayCounter = CumDuty(n).Night Then
+            Loss = CumDuty(n).Lossn1
+            Exit For
+        End If
+    Next n
+    'Worksheets("daytest").Cells(DayCounter + 1, 3) = Loss
+    If Loss = -99 Then
+        Lossc = 0
+    Else
+        Lossc = Loss
+    End If
+    'Worksheets("daytest").Cells(DayCounter + 1, 4) = Lossc
+    SecondNight = CumDay(DayCounter).NextNight + 1
+    'Worksheets("daytest").Cells(DayCounter + 1, 5) = SecondNight
+    If DayCounter = 1 Then
+        Lossn2 = 0
+    Else
+        Lossn2 = -99
+        For n = 1 To NumberOfDuties
+            If DayCounter = CumDuty(n).Night2 Then
+                Lossn2 = CumDuty(n).Loss2xg
+                Exit For
+            End If
+        Next n
+    End If
+    'Worksheets("daytest").Cells(DayCounter + 1, 6) = Lossn2
+    If Lossn2 > -99 Then
+        Lossn2c = Lossn2
+    Else
+        Lossn2c = 0
+    End If
+    'Worksheets("daytest").Cells(DayCounter + 1, 7) = Lossn2c
+    If Lossc + Lossn2c > 8 Then
+        TotalLoss = 8
+    Else
+        TotalLoss = Lossc + Lossn2c
+    End If
+     'Worksheets("daytest").Cells(DayCounter + 1, 8) = TotalLoss
+    Asymptote = 3.9 - TotalLoss * 0.441596758431994
+    'Worksheets("daytest").Cells(DayCounter + 1, 9) = Asymptote
+    If DayCounter = 1 Then
+            If 3.87 > Asymptote Then
+                NightPVT = Asymptote + (3.87 - Asymptote) * Exp(-0.136934833451947)
+            Else
+                NightPVT = Asymptote + (3.87 - Asymptote) * Exp(-0.686825862760272)
+            End If
+            CumDay(DayCounter).NightPVT = NightPVT
+    Else
+            If CumDay(DayCounter - 1).NightPVT > Asymptote Then
+                NightPVT = Asymptote + (CumDay(DayCounter - 1).NightPVT - Asymptote) * Exp(-0.136934833451947)
+            Else
+                NightPVT = Asymptote + (CumDay(DayCounter - 1).NightPVT - Asymptote) * Exp(-0.686825862760272)
+            End If
+            CumDay(DayCounter).NightPVT = NightPVT
+    End If
+    'Worksheets("daytest").Cells(DayCounter + 1, 10) = CumDay(DayCounter).NightPVT
+Next DayCounter
+For DayCounter = DayCount To 1 Step -1
+If DayCounter = DayCount Then
+    CumDay(DayCounter).PVTNext = 0
+Else
+    CumDay(DayCounter).PVTNext = CumDay(DayCounter + 1).NightPVT
+End If
+'Worksheets("daytest").Cells(DayCounter + 1, 11) = CumDay(DayCounter).PVTNext
+Next DayCounter
+
+'continue with duties and calculate final result
+For DutyCounter = 1 To NumberOfDuties
+    If DutyCounter = 1 Then
+        CumPVT = 3.9
+    Else
+        n = 0
+        Do
+            n = n + 1
+        Loop Until CumDay(n).NextNight = CumDuty(DutyCounter).Ngtt Or n = DayCount
+        If n = DayCount Then
+            CumPVT = 0
+        Else
+            CumPVT = CumDay(n).NightPVT
+        End If
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 28) = CumPVT
+    If DutyCounter = 1 Then
+        CumDuty(DutyCounter).PVTNext = 3.9
+    Else
+        n = 0
+        Do
+            n = n + 1
+        Loop Until CumDay(n).NextNight = CumDuty(DutyCounter).Ngtt Or n = DayCount
+        If n = DayCount Then
+           ' Beep
+            CumDuty(DutyCounter).PVTNext = 0
+        Else
+            CumDuty(DutyCounter).PVTNext = CumDay(n).PVTNext
+        End If
+    End If
+   ' Worksheets("cumtest").Cells(DutyCounter + 1, 29) = CumDuty(DutyCounter).PVTNext
+    If CumDuty(DutyCounter).StartHr < 39 And CumDuty(DutyCounter).StartHr > 27 Then
+        PVT2 = CumPVT + (CumDuty(DutyCounter).PVTNext - CumPVT) * 0.5 * (1 + Sin(3.14159 * (CumDuty(DutyCounter).StartHr - 33) / 12))
+    Else
+        PVT2 = CumPVT
+    End If
+   ' Worksheets("cumtest").Cells(DutyCounter + 1, 30) = PVT2
+    'Worksheets("cumtest").Cells(1, 30) = "PVT2"
+    If CumDuty(DutyCounter).PVTNext = 0 And CumPVT = 0 Then
+        PVT3 = 0
+    Else
+        PVT3 = PVT2 * 4.44 / 3.9
+    End If
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 31) = PVT3
+    'Worksheets("cumtest").Cells(1, 31) = "PVT3"
+    ' not sure why this step exists
+    CumDuty(DutyCounter).PVT3 = PVT3
+Next DutyCounter
+For DutyCounter = NumberOfDuties To 1 Step -1
+    If CumDuty(DutyCounter).PVT3 = 0 And DutyCounter + 1 <= NumberOfDuties Then
+        CumDuty(DutyCounter).PVT4 = CumDuty(DutyCounter + 1).PVT4
+    Else
+        CumDuty(DutyCounter).PVT4 = CumDuty(DutyCounter).PVT3
+    End If
+Next DutyCounter
+For DutyCounter = 1 To NumberOfDuties
+    If DutyCounter > 1 Then
+        If CumDuty(DutyCounter - 1).Gap > 9 Then
+            x = 1
+        Else
+            If CumDuty(DutyCounter - 1).Gap < 1 Then
+                x = 0
+            Else
+                x = (CumDuty(DutyCounter - 1).Gap - 1) / 8
+            End If
+        End If
+    Else
+        x = 1
+    End If
+    'If IsNumeric(CumDuty(DutyCounter).PVTNext) Then
+    If CumDuty(DutyCounter).PVTNext > 0 Then
+        PVTOut = x * CumDuty(DutyCounter).PVT4 + (1 - x) * CumDuty(DutyCounter).PVTNext
+    Else
+        PVTOut = CumDuty(DutyCounter).PVT4
+    End If
+   ' Worksheets("cumtest").Cells(DutyCounter + 1, 33) = x
+   ' Worksheets("cumtest").Cells(DutyCounter + 1, 34) = PVTOut
+   ' Worksheets("cumtest").Cells(DutyCounter + 1, 32) = CumDuty(DutyCounter).PVT4
+   ' Worksheets("cumtest").Cells(1, 33) = "x"
+   ' Worksheets("cumtest").Cells(1, 34) = "PVTOut"
+   ' Worksheets("cumtest").Cells(1, 32) = "PVT4"
+   ' =MAX((LN((1.001-AH2/4.44)/0.00189))/0.801,1)
+    If (Log((1.001 - PVTOut / 4.44) / 0.00189)) / 0.801 > 1 Then
+        Sp = (Log((1.001 - PVTOut / 4.44) / 0.00189)) / 0.801
+    Else
+        Sp = 1
+    End If
+   ' Worksheets("cumtest").Cells(DutyCounter + 1, 35) = Sp
+   ' Worksheets("cumtest").Cells(1, 35) = "Sp"
+    Spcc = 1 + 6 / (1 + Exp(3.057 - 0.764 * Sp))
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 34) = Spcc
+    pKss = 1.26 / (1 + 3670 * Exp(-1.06 * (-0.6 + 1.436 * Spcc)))
+    'Worksheets("cumtest").Cells(DutyCounter + 1, 35) = pKss
+    '*****Fatigue Factor***************
+    Duties(DutyCounter).Cumulative.FatigueFactor = pKss / 3
+    '*****Fatigue Factor***************
+    CumDuty(DutyCounter).CR = 0.0886 + 0.0359 * Cos(3.14159 * (CumDuty(DutyCounter).StartCommute + 0.5 * CumDuty(DutyCounter).Length) / 12)
+    If DutyCounter = 1 Then
+        LGap = 24
+    Else
+        LGap = CumDuty(DutyCounter - 1).Gap
+    End If
+    If DutyCounter = 1 Then
+        Endd = 0
+    Else
+        Endd = CumDuty(DutyCounter - 1).EndCommute
+    End If
+    nd = Int(LGap / 24)
+    If DutyCounter = 1 Then
+        En1 = 0
+    Else
+        If Endd + 1 >= 24 Then
+            En1 = Endd - 23
+        Else
+            En1 = Endd + 1
+        End If
+    End If
+    If CumDuty(DutyCounter).StartCommute + 1 >= 24 Then
+        St1 = CumDuty(DutyCounter).StartCommute - 23
+    Else
+        St1 = CumDuty(DutyCounter).StartCommute + 1
+    End If
+    If En1 < 8 Then
+        EndSleep = 8 - En1
+    Else
+        EndSleep = 0
+    End If
+    If St1 < 8 Then
+        StartSleep = St1
+    Else
+        StartSleep = 0
+    End If
+    If EndSleep > 0 And StartSleep > 0 Then
+        Sleep2 = 1
+    Else
+        Sleep2 = 0
+    End If
+    Nslp1 = nd + (EndSleep + StartSleep) / 8
+    If Sleep2 = 1 And St1 >= En1 Then
+        Nslp2 = Nslp1 - 2
+    Else
+        Nslp2 = Nslp1
+    End If
+    If DutyCounter = 1 Then
+        CumDuty(DutyCounter).Risk = 1
+    Else
+        If LGap < 9 Then
+            CumDuty(DutyCounter).Risk = CumDuty(DutyCounter - 1).Risk + 0.06 * (9 - LGap)
+        Else
+            If LGap > 24 Then
+                CumDuty(DutyCounter).Risk = 1 + (CumDuty(DutyCounter - 1).Risk - 1) * Exp(-1.118 * (Nslp2 - 1))
+            Else
+                CumDuty(DutyCounter).Risk = CumDuty(DutyCounter - 1).Risk + 0.5 * (CumDuty(DutyCounter).CR + CumDuty(DutyCounter - 1).CR)
+            End If
+        End If
+    End If
+
+
+
+  '  ********Risk Factor*************
+    Duties(DutyCounter).Cumulative.RiskFactor = CumDuty(DutyCounter).Risk / 1.113
+   ' ********Risk Factor**************
+Next DutyCounter
+Exit Function
+cumproblem:
+problem:
+MsgBox "Problem in cumulative calculation"
+Application.EnableEvents = True
+Application.ScreenUpdating = True
+End Function
+Function AssociatedRisk(StartHrs As Double, Endhrs As Double, Commute As Single) As Single
+Dim DutyLength As Double
+Dim AdjStart As Single
+Dim AdjLength As Single
+Dim RelativeCommute As Single
+Dim TodRisk As Single
+Dim ShiftRisk As Single
+Dim CommuteRisk As Single
+Dim ShiftRiskAdjusted As Single
+Const P1 = -0.4287
+Const P2 = 0.1501
+Const P3 = 0.129
+Const P4 = 0.0359
+Const P5 = -0.8012
+Const P6 = 0.7315
+
+If Endhrs > StartHrs Then
+    DutyLength = Endhrs - StartHrs
+Else
+    DutyLength = (24 + Endhrs) - StartHrs
+End If
+AdjStart = StartHrs - ((Commute - 40) / 60)
+RelativeCommute = (Commute - 40) / 60
+AdjLength = DutyLength + RelativeCommute
+TodRisk = 1.0106 + 0.1057 * (Sin(3.14159 * Endhrs / 12) - Sin(3.14159 * AdjStart / 12)) / (AdjLength * 3.14159 / 12)
+If AdjLength < 4.25 Then
+    ShiftRisk = 1 + P4 + P5 * Exp(-P6 * AdjLength)
+Else
+    If AdjLength > 8.13 Then
+        ShiftRisk = 1 + P1 + P2 * Exp(P3 * AdjLength)
+    Else
+        ShiftRisk = 1
+    End If
+End If
+If RelativeCommute < 4.25 Then
+    CommuteRisk = 1 + P4 + P5 * Exp(-P6 * RelativeCommute)
+Else
+    If RelativeCommute > 8.13 Then
+        CommuteRisk = 1 + P1 + P2 * Exp(P3 * RelativeCommute)
+    Else
+        CommuteRisk = 1
+    End If
+End If
+If RelativeCommute <= 0 Then
+    ShiftRiskAdjusted = ShiftRisk
+Else
+    ShiftRiskAdjusted = (ShiftRisk * AdjLength - CommuteRisk * RelativeCommute) / DutyLength
+End If
+AssociatedRisk = TodRisk * ShiftRiskAdjusted
+End Function
+
+
+Sub ChartData(NumberOfDays As Long)
+Dim ChartSheet As Worksheet
+Dim FatigueChart As ChartObject
+Dim Col As Object
+Dim DayCount As Long
+Dim StartDay As Long
+Dim EndDay As Long
+Dim NumberOfCharts As Long
+Dim StartCell As Long
+Dim EndCell As Long
+Dim CurrentCell As Long
+Dim n As Long
+Set ChartSheet = Worksheets("Charts")
+On Error GoTo charterror
+With ChartSheet
+    .Activate
+    .Columns(1).Hidden = False
+    .Columns(2).Hidden = False
+    .Range("A1:B65535").Delete
+    If .ChartObjects.Count > 0 Then
+        .ChartObjects.Select
+        .ChartObjects.Delete
+    End If
+    DayCount = 0
+    StartDay = CDate(Worksheets("Schedule").Cells(11, 1))
+    StartCell = 11
+    EndCell = 11
+    Do While Not IsEmpty(Worksheets("Schedule").Cells(EndCell, 1))
+        If StartDay < 10000 Then
+            .Cells(EndCell - 10, 1).NumberFormat = "######"
+            .Cells(EndCell - 10, 1) = CSng(Worksheets("Schedule").Cells(EndCell, 1))
+        Else
+            .Cells(EndCell - 10, 1).NumberFormat = "dd/mm/yyyy"
+            .Cells(EndCell - 10, 1) = CDate(Worksheets("Schedule").Cells(EndCell, 1))
+        End If
+        .Cells(EndCell - 10, 2) = (Worksheets("Schedule").Cells(EndCell, FatigueCol))
+        EndCell = EndCell + 1
+    Loop
+    StartCell = 1
+    EndCell = EndCell - 11
+    NumberOfCharts = (NumberOfDays \ 100) + 1
+    For n = 1 To NumberOfCharts
+        If NumberOfCharts = 1 Then
+            EndDay = StartDay + NumberOfDays
+        Else
+            EndDay = StartDay + 99
+        End If
+        CurrentCell = EndCell - 1
+        Set FatigueChart = .ChartObjects.Add(Left:=0, Width:=750, Top:=(0 + (225 * (n - 1))), Height:=225)
+        With FatigueChart.Chart
+            .PlotVisibleOnly = False
+            .ChartType = xlXYScatter
+            .SetSourceData Source:=Worksheets("Charts").Range("A1:B" + CStr(EndCell)), PlotBy:=xlColumns
+            .HasTitle = True
+            If NumberOfCharts > 1 Then
+                .ChartTitle.Text = "Chart " + CStr(n) + " - " + Worksheets("Schedule").Cells(4, 2) + " " + Worksheets("Schedule").Cells(5, 2) + " " + Worksheets("Schedule").Cells(6, 2) + " " + Worksheets("Schedule").Cells(7, 2)
+            Else
+                .ChartTitle.Text = Worksheets("Schedule").Cells(4, 2) + " " + Worksheets("Schedule").Cells(5, 2) + " " + Worksheets("Schedule").Cells(6, 2) + " " + Worksheets("Schedule").Cells(7, 2)
+            End If
+            .Location xlLocationAsObject, ChartSheet.Name
+        End With
+        ActiveChart.ChartTitle.Font.Size = 10
+        With ActiveChart.SeriesCollection(1)
+            .Name = Worksheets("Schedule").Cells(10, 11)
+            .MarkerStyle = xlMarkerStyleDiamond
+        End With
+        With FatigueChart.Chart.Axes(xlValue)
+            .HasTitle = True
+            .AxisTitle.Font.Size = 10
+            If Worksheets("Schedule").ToggleButton1.Value = True Then
+                'Risk
+                .AxisTitle.Text = "Risk Index"
+            Else
+                .AxisTitle.Text = "Fatigue Index"
+            End If
+        End With
+        With FatigueChart.Chart.PlotArea.Interior
+            .Color = RGB(255, 255, 255)
+            .PatternColorIndex = 1
+            .Pattern = xlSolid
+        End With
+        With FatigueChart.Chart.Axes(xlCategory)
+            .HasTitle = True
+            .AxisTitle.Text = "Day"
+            .AxisTitle.Font.Size = 10
+            If StartDay < 10000 Then
+                .MinimumScale = StartDay - 1
+                .MaximumScale = EndDay
+            Else
+                .MinimumScale = CDate(StartDay)
+                .MaximumScale = CDate(EndDay)
+            End If
+        End With
+        FatigueChart.Chart.Legend.Select
+        Selection.Delete
+        StartCell = EndCell
+        StartDay = StartDay + 100
+    Next n
+    Set FatigueChart = .ChartObjects.Add(Left:=0, Width:=750, Top:=(0 + (225 * (n - 1))), Height:=225)
+    With FatigueChart.Chart
+        .ChartType = xlLineMarkers
+        .PlotVisibleOnly = False
+        If StartDay < 10000 Then
+            .SetSourceData Source:=Sheets("Charts").Range("B1:B" + CStr(EndCell)), PlotBy:=xlColumns
+        Else
+            .SetSourceData Source:=Sheets("Charts").Range("A1:B" + CStr(EndCell)), PlotBy:=xlColumns
+        End If
+        .HasTitle = True
+        .ChartTitle.Text = Worksheets("Schedule").Cells(4, 2) + " " + Worksheets("Schedule").Cells(5, 2) + " " + Worksheets("Schedule").Cells(6, 2) + " " + Worksheets("Schedule").Cells(7, 2)
+        .Location Where:=xlLocationAsObject, Name:="Charts"
+        ActiveChart.ChartTitle.Font.Size = 10
+    
+        With ActiveChart.SeriesCollection(1)
+                .Name = Worksheets("Schedule").Cells(10, 11)
+                .MarkerStyle = xlMarkerStyleCircle
+                .MarkerBackgroundColor = RGB(255, 204, 0)
+                .MarkerForegroundColor = RGB(255, 204, 0)
+                With .Border
+                    .Color = RGB(255, 204, 0)
+                    .Weight = xlMedium
+                    .LineStyle = xlContinuous
+                End With
+        End With
+        With ActiveChart.PlotArea.Interior
+            .Color = RGB(255, 255, 255)
+            .PatternColorIndex = 1
+            .Pattern = xlSolid
+        End With
+        With ActiveChart
+            .HasAxis(xlCategory, xlPrimary) = True
+            .HasAxis(xlValue, xlPrimary) = True
+        End With
+        ActiveChart.Axes(xlCategory, xlPrimary).CategoryType = xlCategoryScale
+        FatigueChart.Chart.Legend.Select
+        Selection.Delete
+        With FatigueChart.Chart.Axes(xlValue)
+            .HasTitle = True
+            .AxisTitle.Font.Size = 10
+            If Worksheets("Schedule").ToggleButton1.Value = True Then
+                'Risk
+                .AxisTitle.Text = "Risk Index"
+            Else
+                .AxisTitle.Text = "Fatigue Index"
+            End If
+        End With
+        With FatigueChart.Chart.Axes(xlCategory)
+            .HasTitle = True
+            .AxisTitle.Text = "Duty"
+            .AxisTitle.Font.Size = 10
+        End With
+    End With
+  .Columns(1).Hidden = True
+  .Columns(2).Hidden = True
+  .Cells(1, 3).Select
+End With
+Set FatigueChart = Nothing
+Set ChartSheet = Nothing
+Exit Sub
+charterror:
+MsgBox "Problem in Graphs routine"
+Set FatigueChart = Nothing
+Set ChartSheet = Nothing
+On Error GoTo 0
+End Sub
+
+Sub Draw(StartOfSchedule As Long, NumberOfDays As Long, NumberOfDuties As Long)
+Dim n As Long
+Dim H As Single
+Dim StartDay As Long
+Dim EndDay As Long
+Dim StartDuty As Long
+Dim EndDuty As Long
+Dim MyDocument As Worksheet
+Dim Sh As Shape
+Dim Sr As ShapeRange
+Dim asRange As Object
+Dim numShapes As Long
+Dim numAutoShapes As Long
+Dim p As MsoPatternType
+Dim i As Long
+Worksheets("Schedule").Activate
+On Error GoTo drawerror
+Set MyDocument = Worksheets("Schedule")
+Application.ScreenUpdating = False
+With MyDocument.Shapes
+    For Each Sh In MyDocument.Shapes
+        Select Case Sh.Type
+        Case Is = msoAutoShape
+            Sh.Delete
+        Case msoTextBox
+            Sh.Delete
+        Case msoLine
+            Sh.Delete
+        Case msoGroup
+            Sh.Delete
+         End Select
+    Next
+    Set Sh = Nothing
+    With .AddShape(msoShapeRectangle, DayOffset - 60, 1, DayWidth + 70, (NumberOfDays + 5) * DayHeight)
+        .Fill.ForeColor.RGB = RGB(255, 255, 255)
+    End With
+
+    For n = 0 To NumberOfDays + 1
+         With .AddLabel(msoTextOrientationHorizontal, DayOffset - 55, (n + 2) * DayHeight, 50, DayHeight - 2).TextFrame
+            .HorizontalAlignment = xlCenter
+            .VerticalAlignment = xlVAlignTop
+           With .Characters
+                .Font.Size = 9
+                If StartOfSchedule < 10000 Then
+                    .Text = CStr(n + 1)
+                Else
+                    .Text = Format(DateAdd("d", n, StartOfSchedule), "Short Date")
+                End If
+            End With
+         End With
+        .AddShape(msoShapeRectangle, DayOffset, (n + 2) * DayHeight, DayWidth, DayHeight - 2).Fill.ForeColor.RGB = RGB(240, 240, 240)
+    Next n
+    n = 0
+    For H = 0 To 1 + (1 / 24) Step 1 / 24
+        With .AddLine(DayOffset + (DayWidth * H), 1.75 * DayHeight, DayOffset + (DayWidth * H), (NumberOfDays + 4) * DayHeight).Line
+
+            If n = 0 Or n = 6 Or n = 12 Or n = 18 Or n = 24 Then
+                .ForeColor.RGB = RGB(0, 15, 94)
+                .DashStyle = msoLineRoundDot
+                .Transparency = 0.02
+            Else
+                .ForeColor.RGB = RGB(246, 109, 5)
+                .DashStyle = msoLineDash
+                .Transparency = 0.4
+            End If
+        End With
+        If n = 0 Or n = 6 Or n = 12 Or n = 18 Or n = 24 Then
+                With .AddLabel(msoTextOrientationHorizontal, DayOffset + (DayWidth * H) - 7, 0.5 * DayHeight, 30, DayHeight - 2).TextFrame
+                    .HorizontalAlignment = xlCenter
+                    .VerticalAlignment = xlVAlignTop
+                    With .Characters
+                        .Font.Size = 9
+                        .Text = Format(n, "00")
+                    End With
+                End With
+                With .AddLabel(msoTextOrientationHorizontal, DayOffset + (DayWidth * H) - 7, (NumberOfDays + 4) * DayHeight, 30, DayHeight - 2).TextFrame
+                    .HorizontalAlignment = xlCenter
+                    .VerticalAlignment = xlVAlignTop
+                    With .Characters
+                        .Font.Size = 9
+                        .Text = Format(n, "00")
+                    End With
+                End With
+        End If
+        n = n + 1
+    Next H
+    'now draw on duties
+    For n = 1 To NumberOfDuties
+        StartDay = DateDiff("d", StartOfSchedule, Duties(n).OnDuty)
+        EndDay = DateDiff("d", StartOfSchedule, Duties(n).OffDuty)
+        If StartDay = EndDay Then
+            'Duty only on one day
+            StartDuty = DayWidth * (Duties(n).OnDuty - Int(Duties(n).OnDuty))
+            EndDuty = DayWidth * (Duties(n).OffDuty - Int(Duties(n).OffDuty))
+            With .AddShape(msoShapeRectangle, DayOffset + StartDuty, (StartDay + 2) * DayHeight, EndDuty - StartDuty, DayHeight - 2)
+                ' This is needed to make Excel 2010 shade boxes as in Excel 2003
+                .Select
+                With Selection.ShapeRange.Fill
+                    .Visible = msoTrue
+                    .ForeColor.TintAndShade = 0
+                    .ForeColor.RGB = RGB(255, 255, 255)
+                    .Patterned msoPatternZigZag
+                End With
+                With Selection.ShapeRange.Fill
+                    .Visible = msoTrue
+                    .ForeColor.TintAndShade = 0
+                    .BackColor.RGB = RGB(77, 188, 251)
+                    .Patterned msoPatternZigZag
+                End With
+                With Selection.ShapeRange.Fill
+                    .Visible = msoTrue
+                    .Patterned msoPatternZigZag
+                End With
+                ' back to Excel 2003
+                .Fill.ForeColor.RGB = RGB(255, 255, 255)
+                .Fill.BackColor.RGB = RGB(77, 188, 251)
+                .Fill.Patterned msoPatternZigZag
+            End With
+        Else
+            StartDuty = DayWidth * (Duties(n).OnDuty - Int(Duties(n).OnDuty))
+            With .AddShape(msoShapeRectangle, DayOffset + StartDuty, (StartDay + 2) * DayHeight, DayWidth - StartDuty, DayHeight - 2)
+                ' This is needed to make Excel 2010 shade boxes as in Excel 2003
+                .Select
+                With Selection.ShapeRange.Fill
+                    .Visible = msoTrue
+                    .ForeColor.TintAndShade = 0
+                    .ForeColor.RGB = RGB(255, 255, 255)
+                    .Patterned msoPatternZigZag
+                End With
+                With Selection.ShapeRange.Fill
+                    .Visible = msoTrue
+                    .ForeColor.TintAndShade = 0
+                    .BackColor.RGB = RGB(77, 188, 251)
+                    .Patterned msoPatternZigZag
+                End With
+                With Selection.ShapeRange.Fill
+                    .Visible = msoTrue
+                    .Patterned msoPatternZigZag
+                End With
+                ' back to Excel 2003
+                .Fill.ForeColor.RGB = RGB(255, 255, 255)
+                .Fill.BackColor.RGB = RGB(77, 188, 251)
+                .Fill.Patterned msoPatternZigZag
+            End With
+            EndDuty = DayWidth * (Duties(n).OffDuty - Int(Duties(n).OffDuty))
+            With .AddShape(msoShapeRectangle, DayOffset, (StartDay + 3) * DayHeight, EndDuty, DayHeight - 2)
+                ' This is needed to make Excel 2010 shade boxes as in Excel 2003
+                .Select
+                With Selection.ShapeRange.Fill
+                    .Visible = msoTrue
+                    .ForeColor.TintAndShade = 0
+                    .ForeColor.RGB = RGB(255, 255, 255)
+                    .Patterned msoPatternZigZag
+                End With
+                With Selection.ShapeRange.Fill
+                    .Visible = msoTrue
+                    .ForeColor.TintAndShade = 0
+                    .BackColor.RGB = RGB(77, 188, 251)
+                    .Patterned msoPatternZigZag
+                End With
+                With Selection.ShapeRange.Fill
+                    .Visible = msoTrue
+                    .Patterned msoPatternZigZag
+                End With
+                ' back to Excel 2003
+                .Fill.ForeColor.RGB = RGB(255, 255, 255)
+                .Fill.BackColor.RGB = RGB(77, 188, 251)
+                .Fill.Patterned msoPatternZigZag
+            End With
+        End If
+    Next n
+    With MyDocument.Shapes
+        numShapes = .Count
+        If numShapes > 1 Then
+           numAutoShapes = 0
+           ReDim autoShpArray(1 To numShapes)
+           For i = 1 To numShapes
+                If .Item(i).Type = msoAutoShape Or .Item(i).Type = msoTextBox Or .Item(i).Type = msoLine Then
+                    numAutoShapes = numAutoShapes + 1
+                    autoShpArray(numAutoShapes) = .Item(i).Name
+                End If
+           Next
+           If numAutoShapes > 1 Then
+                ReDim Preserve autoShpArray(1 To numAutoShapes)
+                Set asRange = .Range(autoShpArray)
+                asRange.Group
+           End If
+           ReDim autoShpArray(0)
+        End If
+    End With
+End With
+Application.ScreenUpdating = True
+Exit Sub
+drawerror:
+Application.ScreenUpdating = True
+MsgBox "Problem in draw"
+
+End Sub
+
+
+
+
+
+Sub DutyBreaks(r As Long, JWL As Long, JAT As Long, BFreq As Single, BAveLen As Single, ContWorkLen As Single, BAfterC As Single, IsDefault As Boolean)
+With JobBreak
+    .Label33.Caption = r
+    '.Label34.Caption = IsDefault
+    .TextBox4.Value = BFreq \ 60
+    .TextBox5.Value = BFreq - (.TextBox4.Value * 60)
+    .TextBox6.Value = BAveLen \ 60
+    .TextBox7.Value = BAveLen - (.TextBox6.Value * 60)
+    .TextBox8.Value = ContWorkLen \ 60
+    .TextBox9.Value = ContWorkLen - (.TextBox8.Value * 60)
+    .TextBox10.Value = BAfterC \ 60
+    .TextBox11.Value = BAfterC - (.TextBox10.Value * 60)
+    If JWL = 3 Then .OptionButton3.Value = True
+    If JWL = 2 Then .OptionButton4.Value = True
+    If JWL = 1 Then .OptionButton5.Value = True
+    If JWL = 0 Then .OptionButton6.Value = True
+    If JAT = 3 Then .OptionButton7.Value = True
+    If JAT = 2 Then .OptionButton8.Value = True
+    If JAT = 1 Then .OptionButton9.Value = True
+    If JAT = 0 Then .OptionButton10.Value = True
+    If IsDefault Then
+        .CommandButton3.Enabled = False
+    Else
+        .CommandButton3.Enabled = True
+    End If
+    .Show
+End With
+End Sub
+Sub DutyCommute(r As Long, ct As Single, IsDefault As Boolean)
+With Commute
+    If IsDefault Then
+        .CommandButton3.Enabled = False
+    Else
+        .CommandButton3.Enabled = True
+    End If
+    .Label33.Caption = r
+    .TextBox2.Value = ct \ 60
+    .TextBox3.Value = ct - (.TextBox2.Value * 60)
+    .Show
+End With
+End Sub
+
+Sub Reset()
+'reset sheet as blank
+Application.EnableEvents = False
+With Worksheets("Schedule")
+    .CheckBox1.Value = False
+    .CheckBox2.Value = False
+    .Range("B4:G7,J4:L4").ClearContents
+    If LastCell(Sheet1).Row > 10 Then
+        .Range("A11:AA" + CStr(LastCell(Sheet1).Row)).Clear
+    End If
+    .Range("A11:A100").NumberFormat = "@" 'Clear
+End With
+With Worksheets("Constants")
+    .Range("A18:A24").Clear
+    .Cells(18, 1) = 2
+    .Cells(19, 1) = 1
+    .Cells(20, 1) = 180
+    .Cells(21, 1) = 15
+    .Cells(22, 1) = 360
+    .Cells(23, 1) = 30
+    .Cells(24, 1) = 40
+    .Cells(50, 1) = 0
+End With
+With Worksheets("Summary")
+    .Range("C2:D6").ClearContents
+    .Range("D8:D19").ClearContents
+    .Range("D21:D25").ClearContents
+    .Range("D27:D33").ClearContents
+End With
+Application.EnableEvents = True
+End Sub
+
+Function Sort_Schedule() As Boolean
+
+Dim RowCounter As Long
+Dim RowNumber As Long
+Dim DayData As Long
+Dim n As Long
+
+On Error GoTo problem
+Worksheets("Schedule").Activate
+Rows("11:" + CStr(LastCell(Sheet1).Row)).Sort Key1:=Range("A11"), Order1:=xlAscending, Key2:=Range("B11" _
+        ), Order2:=xlAscending, Key3:=Range("C11"), Order3:=xlAscending, Header _
+        :=xlGuess, OrderCustom:=1, MatchCase:=False, Orientation:=xlTopToBottom
+RowCounter = 11
+Do While Not IsEmpty(Cells(RowCounter, 1))
+    RowCounter = RowCounter + 1
+Loop
+RowNumber = RowCounter - 1
+Range("A" + CStr(RowNumber + 1) + ":AA" + CStr(RowNumber + 1000)).Clear
+Range("A11:A" + CStr(RowNumber + 10)).NumberFormat = "@"
+For n = 11 To RowNumber
+    DayData = Int(CDate(Cells(n, 1)))
+    Cells(n, 1) = CLng(DayData)
+Next n
+Worksheets("Schedule").Range("A11:Y" + CStr(RowCounter - 1)).Sort Key1:=Range("A11"), Order1:=xlAscending, Key2:=Range("B11" _
+        ), Order2:=xlAscending, Key3:=Range("C11"), Order3:=xlAscending, Header _
+        :=xlGuess, OrderCustom:=1, MatchCase:=False, Orientation:=xlTopToBottom
+If Cells(11, 1) > 10000 Then
+    Range("A11:A" + CStr(RowNumber)).NumberFormat = "@"
+    For n = 11 To RowNumber
+        Cells(n, 1).Value = Format$(Cells(n, 1).Value, "dd/mm/yyyy")
+    Next n
+End If
+Sort_Schedule = True
+Exit Function
+problem:
+Sort_Schedule = False
+End Function
+
+Sub UpdateBreaks(r As Long, JWL As Long, JAT As Long, BFreq As Single, BAveLen As Single, ContWorkLen As Single, BAfterC As Single)
+With Worksheets("Schedule")
+    .Cells(r, 20) = JWL
+    .Cells(r, 21) = JAT
+    .Cells(r, 22) = BFreq
+    .Cells(r, 23) = BAveLen
+    .Cells(r, 24) = ContWorkLen
+    .Cells(r, 25) = BAfterC
+End With
+End Sub
+Sub UpdateCommute(r As Long, ct As Long)
+With Worksheets("Schedule")
+     .Cells(r, 19) = ct
+End With
+End Sub
+Sub UpdateDefaults()
+Dim r As Long
+Dim x As Long
+With Worksheets("Schedule")
+    Application.ScreenUpdating = False
+    r = 10
+    .Cells(r, 19) = "Commute 19"
+    .Cells(r, 20) = "Workload 20"
+    .Cells(r, 21) = "Attention 21"
+    .Cells(r, 22) = "Break Frequency 22"
+    .Cells(r, 23) = "Break Average Length 23"
+    .Cells(r, 24) = "Continuous Work Length 24"
+    .Cells(r, 25) = "Break after cont 25"
+    r = 11
+    Do While Not IsEmpty(.Cells(r, 4))
+        If .Cells(r, 4) <> "Individual" Then
+            .Cells(r, 20) = Worksheets("constants").Cells(18, 1)
+            .Cells(r, 21) = Worksheets("constants").Cells(19, 1)
+            .Cells(r, 22) = Worksheets("constants").Cells(20, 1)
+            .Cells(r, 23) = Worksheets("constants").Cells(21, 1)
+            .Cells(r, 24) = Worksheets("constants").Cells(22, 1)
+            .Cells(r, 25) = Worksheets("constants").Cells(23, 1)
+         End If
+        If .Cells(r, 5) <> "Individual" Then
+            .Cells(r, 19) = Worksheets("constants").Cells(24, 1)
+        End If
+         r = r + 1
+     Loop
+    Application.ScreenUpdating = True
+End With
+End Sub
+Function DutyFactor(DutyLength As Double, Jw As Long, Ja As Long, BFQ As Single, BAL As Single, CWL As Single, BAC As Single) As Factor_Type
+Const Constant1 = 1.826297414
+Const Constant2 = 1.146457295
+
+Dim Workload As Single
+Dim ContinuousWork As Single
+Dim DurationOfBreak As Single
+Dim FiveMinBreak As Single
+Dim FifteenMinBreak As Single
+Dim ThirtyMinBreak As Single
+Dim FinalBreakFactor As Single
+Dim LengthOfDuty As Single
+Dim NumberOfSequences As Long
+Dim LengthOfSequences As Single
+Dim BreakEffect As Single
+Dim n As Long
+Dim w As Long
+Dim Leng As Single
+Dim Seq As Single
+Dim Rr As Single
+Dim RrTotal As Single
+ 'JobWorkload + JobAttention
+    Workload = Jw + Ja
+    w = Workload
+    ContinuousWork = (BFQ + CWL) / 2
+    DurationOfBreak = (BAL + BAC) / 2
+    Workload = 0.125 + 0.015 * Workload
+    If DurationOfBreak = 0 And ContinuousWork = 0 Then
+        Workload = Workload * 1.2
+    Else
+        Workload = Workload * 1.2 * ContinuousWork / (ContinuousWork + DurationOfBreak)
+    End If
+    FiveMinBreak = 0.172731235 + -0.200918653 * 0.04 + 0.03552264 * 0.04 * 0.04
+    FifteenMinBreak = ContinuousWork * 0.000442
+    ThirtyMinBreak = 0.000206 + -0.0000138433 * ContinuousWork + 0.00000096491 * ContinuousWork * ContinuousWork
+    If DurationOfBreak < 5 Then
+        FinalBreakFactor = 0.174 + (FiveMinBreak - 0.174) * DurationOfBreak / 5
+    Else
+        If DurationOfBreak < 15 Then
+            FinalBreakFactor = FiveMinBreak + (FifteenMinBreak - FiveMinBreak) * (DurationOfBreak - 5) / 10
+        Else
+            If DurationOfBreak < 30 Then
+                FinalBreakFactor = FifteenMinBreak + (ThirtyMinBreak - FifteenMinBreak) * (DurationOfBreak - 15) / 15
+            Else
+                If DurationOfBreak < 60 Then
+                    FinalBreakFactor = ThirtyMinBreak * (60 - DurationOfBreak) / 30
+                Else
+                    FinalBreakFactor = 0
+                End If
+            End If
+        End If
+    End If
+    DutyFactor.FatigueFactor = FinalBreakFactor + Workload
+    LengthOfDuty = DutyLength * 60
+    NumberOfSequences = 1 + Int(LengthOfDuty / (ContinuousWork + DurationOfBreak) - 0.01)
+    LengthOfSequences = Int(0.5 + ContinuousWork / 15)
+    BreakEffect = 0.24 * Exp(-0.395 * (DurationOfBreak - 13.3)) / 0.2388 / (1 + Exp(-0.395 * (DurationOfBreak - 13.3)))
+    n = 0
+    Leng = -1
+    Seq = 0
+    Rr = 1
+    RrTotal = 0
+    Do
+        If Leng < LengthOfSequences Then
+            Leng = Leng + 1
+        Else
+            Leng = 0
+        End If
+        If Leng = 0 Then
+            Seq = Seq + 1
+        End If
+        If Leng = 0 Then
+            Rr = 1 + (Rr - 1) * BreakEffect
+        Else
+            Rr = Constant1 + (Rr - Constant1) * Exp(-0.25 * Constant2)
+        End If
+        RrTotal = RrTotal + Rr
+        'Debug.Print n, Leng, Seq, Rr
+        n = n + 1
+    Loop Until n > NumberOfSequences * LengthOfSequences
+    DutyFactor.RiskFactor = RrTotal / n / 1.4858
+    DutyFactor.RiskFactor = DutyFactor.RiskFactor + (w - 3) * 0.0232
+End Function
+
+Function FormatInput(DataFormat As Long, Data As Variant) As Variant
+'dataformat =1 Date
+'dataformat =2 Time
+'dataformat =3 Number
+Dim Temp As String
+If Not IsEmpty(Data) Then
+    If DataFormat = 1 Then
+        'expecting a date or a day number
+        If IsNumeric(Data) Then
+            'either a day number or date with no sperator
+            If Data < 10000 Then
+                'should be a day number
+                FormatInput = Int(Data)
+            Else
+                Temp = vbNullString
+                If Len(Data) = 5 Then
+                 Temp = "0" + Left(Data, 1) + "/" + Mid(Data, 2, 2) + "/" + Right(Data, 2)
+                End If
+                If Len(Data) = 7 Then
+                 Temp = "0" + Left(Data, 1) + "/" + Mid(Data, 2, 2) + "/" + Right(Data, 4)
+                End If
+                If Len(Data) = 8 Then
+                    Temp = Left(Data, 2) + "/" + Mid(Data, 3, 2) + "/" + Right(Data, 4)
+                End If
+                If Len(Data) = 6 Then
+                    Temp = Left(Data, 2) + "/" + Mid(Data, 3, 2) + "/" + Right(Data, 2)
+                End If
+                If IsDate(Data) Then
+                    FormatInput = Format((Data), "dd/mm/yyyy")
+                    'FormatInput = DateValue(Data) '((Data), "Long Date")
+                Else
+                    If IsDate(Temp) Then
+                        FormatInput = Format((Temp), "dd/mm/yyyy")
+                        'FormatInput = (DateValue(Temp))
+                    Else
+                        MsgBox "Please enter a day number or a date"
+                        FormatInput = vbNullString
+                    End If
+                End If
+            End If
+        Else
+            If IsDate(Data) Then
+                FormatInput = Format(Data, "dd/mm/yyyy")
+                'FormatInput = DateValue(Data)
+            Else
+                'can't make a date of it and its not numeric
+                MsgBox "Please enter a day number or a date"
+            End If
+        End If
+    End If
+    If DataFormat = 2 Then
+        'expecting a time
+        If IsNumeric(Data) And Not IsEmpty(Data) Then
+            'if the data is numeric then it might be a excel date time value
+            ' need to discard integer part of value)
+            'Data = Data - Int(Data)
+            If Data < 1 Then
+            ' now turn into a time
+                Data = DateAdd("s", 86400 * Data, #12:00:00 AM#)
+            End If
+        End If
+        Temp = vbNullString
+        If Len(Data) < 4 And Not IsDate(Data) Then
+            'pad with leading zeros
+            Temp = Data
+            Temp = String(4 - Len(Temp), "0") + Temp
+        End If
+        If InStr(1, Data, ":", 1) < 1 Then
+            If Temp = vbNullString Then
+                Temp = Data
+            End If
+            Temp = Left(Temp, 2) + ":" + Right(Temp, 2)
+        Else
+            'has a seperator
+        End If
+        If IsDate(Data) Then
+            Data = CDate(Data) - Int(CDate(Data))
+            Data = DateAdd("s", 1, Data)
+            FormatInput = Format$((Data), "Short Time")
+        Else
+            If Left(Temp, 3) = "24:" Then
+                Temp = "00:00:00"
+            End If
+            If IsDate(Temp) Then
+                Temp = DateAdd("s", 1, Temp)
+                FormatInput = Format$((Temp), "Short Time")
+            Else
+                'MsgBox "Please use hh:mm or hhmm format"
+                FormatInput = vbNullString
+            End If
+        End If
+    End If
+Else
+    FormatInput = vbNullString
+End If
+End Function
+Function HoursMin(H As Double) As String
+'this will produce thre format h.m
+' h should be in hours
+Dim Htemp As Double
+Dim Days As Long
+Dim Hours As Long
+Dim Minutes As Long
+
+If H > 0 Then
+    HoursMin = ""
+    ' whole number of days
+    Days = Int(H / 24)
+    'remove number of whole days
+    Htemp = (H - (Days * 24))
+    Hours = Int(Htemp)
+    'subtract whole hours
+    Htemp = Htemp - Hours
+    Minutes = Round(Htemp * 60)
+    If Minutes >= 60 Then
+    Hours = Hours + 1
+    Minutes = 0
+    End If
+    If Minutes > 0 Then
+        HoursMin = Format(Minutes, "#0") + "m"
+    End If
+    If Hours > 0 Then
+        HoursMin = Format(Hours, "#0") + "h " + HoursMin
+    End If
+    If Days > 0 Then
+        HoursMin = Format(Days, "###") + "d " + HoursMin
+    End If
+Else
+    HoursMin = "Period < 1 minute"
+End If
+End Function
+
+
+Sub ScreenUpdate()
+Dim FatigueRiskColour As Long
+If Worksheets("Schedule").ToggleButton1.Value = False Then
+    FatigueRiskColour = RGB(0, 15, 94)
+    Worksheets("Schedule").Cells(1, 4) = "Fatigue Index Calculator"
+Else
+    FatigueRiskColour = RGB(23, 55, 30)
+    Worksheets("Schedule").Cells(1, 4) = "Risk Index Calculator"
+End If
+Worksheets("Schedule").Range("A1:L9").Interior.Color = FatigueRiskColour
+Worksheets("Schedule").Range("B4:B7,J4").Interior.Color = RGB(255, 255, 255)
+Worksheets("Schedule").Range("A1:J8,I4").Font.Color = RGB(255, 204, 0)
+Worksheets("Schedule").Range("B4:B7,J4").Font.Color = 0
+Worksheets("Schedule").CheckBox1.BackColor = Worksheets("Schedule").Range("A1:J3").Interior.Color
+Worksheets("Schedule").CheckBox2.BackColor = Worksheets("Schedule").Range("A1:J3").Interior.Color
+Worksheets("Schedule").CheckBox1.ForeColor = RGB(255, 204, 0)
+Worksheets("Schedule").CheckBox2.ForeColor = RGB(255, 204, 0)
+Worksheets("Schedule").Range("A10:L10").Font.Color = RGB(255, 255, 255)
+Worksheets("Schedule").Range("A10:L10").Interior.Color = RGB(4, 188, 247)
+Worksheets("Schedule").CommandButton3.BackColor = RGB(4, 188, 247)
+Worksheets("Schedule").CommandButton3.ForeColor = RGB(255, 255, 255)
+'Update Summary
+Worksheets("Summary").Range("A1:D1,A7:D7,A20:D20,A26:D26").Interior.Color = FatigueRiskColour
+Worksheets("Summary").Range("A1:D1,A7:D7,A20:D20,A26:D26").Font.Color = RGB(255, 204, 0)
+Worksheets("Summary").Range("A2:B6,A8:C19,A21:C25,A27:A33").Interior.Color = RGB(4, 188, 247)
+Worksheets("Summary").Range("A2:A6,A8:A19,A21:A25,A27:A33").Font.Color = RGB(255, 255, 255)
+Worksheets("Summary").Range("A2:D6").Borders.LineStyle = xlContinuous
+Worksheets("Summary").Range("A2:D6,A8:D19,A21:D25,A27:D33").Borders.LineStyle = xlContinuous
+Worksheets("Summary").Range("C2:D6,D8:D19,D21:D25,D27:D33").Interior.Color = RGB(255, 255, 255)
+Worksheets("Summary").Range("C2:D6,D8:D19,D21:D25,D27:D33").Font.Color = 0
+End Sub
+
+
+
+
+
+Function ThreeProcessEstimation(DutyStart As Double, ByVal DutyLength As Single, ByVal TimeOnDuty As Single, Commute As Single) As Single
+Dim StartAmplitude As Single
+Dim StartPhase As Single
+Dim CircadianAmplitude As Single
+Dim CircadianPhase As Single
+Dim EAmplitude As Single
+Dim EPhase As Single
+Dim Duration As Single
+Dim DutyHours As Single
+Dim StartTime As Single
+Dim Total As Single
+Dim CR As Single
+Dim n As Single
+Dim Tod As Single
+Dim CRES As Single
+Dim Sp As Single
+Dim Spcc As Single
+Dim Kss As Single
+Dim pKss8 As Single
+Dim PVT As Single
+Dim PvtTotal As Single
+Dim pKss8Total As Single
+
+Const A = 4.44440027661339
+Const B = 0.0084
+Const Lbd = 0.801
+ 
+StartAmplitude = 0.5
+StartPhase = 1.25
+CircadianAmplitude = 0.74
+CircadianPhase = 5.23
+DutyHours = DutyStart
+
+EAmplitude = StartAmplitude * StartAmplitude + CircadianAmplitude * CircadianAmplitude - StartAmplitude * CircadianAmplitude * Cos((StartPhase - CircadianPhase) * 3.14159 / 12)
+EPhase = Application.WorksheetFunction.Atan2(StartAmplitude * Cos(StartPhase * 3.14159 / 12) - CircadianAmplitude * Cos(CircadianPhase * 3.14159 / 12), StartAmplitude * Sin(StartPhase * 3.14159 / 12) - CircadianAmplitude * Sin(CircadianPhase * 3.14159 / 12)) * 12 / 3.14159
+StartTime = EAmplitude * Cos((DutyStart - EPhase) * 3.14159 / 12)
+n = 0
+'Debug.Print "n", "Duration, ", "DutyHours", "Tod", "StartTime", "CR", "total", "Sp", "Spcc", "Kss", "pKss8"
+'EC = ExtraCommuteTime - CommuteTime
+For Duration = 0 To DutyLength Step 0.25
+    n = n + 1
+    Tod = (Duration + ((Commute - 30) / 60)) * TimeOnDuty
+  '
+    CR = CircadianAmplitude * Cos((DutyHours - CircadianPhase) * 3.14159 / 12)
+    Total = Tod + StartTime + CR
+    CRES = StartTime + CR
+    Sp = Total + 2.45
+    Spcc = 1 + 6 / (1 + Exp(3.057 - 0.764 * Sp))
+    Kss = -0.6 + 1.436 * Spcc
+    'pKss8 = 1.26 / (1 + 3670 * Exp(-1.06 * Kss))
+    pKss8 = 1.26 / (1 + 3670 * Exp(-1.06 * Kss))
+    'Debug.Print n, Duration, DutyHours, Tod, StartTime, CR, Total, Sp, Spcc, Kss, Format(pKss8, "#.###")
+    If DutyHours + 1 >= 24 Then
+        DutyHours = DutyHours - 23.75
+    Else
+        DutyHours = DutyHours + 0.25
+    End If
+    pKss8Total = pKss8Total + pKss8
+Next Duration
+If n > 0 Then
+    ThreeProcessEstimation = pKss8Total / n
+Else
+    ThreeProcessEstimation = 0
+End If
+End Function
+
+Sub UnDraw()
+Dim MyDocument As Worksheet
+Dim Sh As Shape
+Worksheets("Schedule").Activate
+Set MyDocument = Worksheets("Schedule")
+Application.ScreenUpdating = False
+With MyDocument.Shapes
+    For Each Sh In MyDocument.Shapes
+        Select Case Sh.Type
+        Case Is = msoAutoShape
+            Sh.Delete
+        Case msoTextBox
+            Sh.Delete
+        Case msoLine
+            Sh.Delete
+        Case msoGroup
+            Sh.Delete
+         End Select
+    Next
+End With
+End Sub
+
+Sub UpdateCalculation()
+Dim d As Factor_Type
+Dim RowCounter As Long
+Dim StartTime As Double
+Dim Endtime As Double
+Dim StartHrs As Double
+Dim Endhrs As Double
+Dim ScheduleStart As Long
+Dim ScheduleLength As Long
+Dim DutyCount As Long
+Dim n As Long
+Dim SourceRange As Range
+Dim FillRange As Range
+Dim TotalRestDuration As Double
+Dim TotalIndex As Single
+Dim TotalDutyIndex As Double
+Dim DutyLength As Double
+Dim RestLength As Double
+Dim MaxDuty As Double
+Dim MinDuty As Double
+Dim MaxRest As Double
+Dim MinRest As Double
+Dim Pt As Single
+Dim P0 As Single
+Dim x As VbMsgBoxResult
+Dim dp As Long
+Dim RowNumber As Long
+
+Dim TotalDurationOfwork As Single
+Dim TotalWorkDays As Long
+
+Worksheets("Schedule").Activate
+Application.ScreenUpdating = False
+Application.EnableEvents = False
+On Error GoTo problem
+
+RowCounter = 11
+ReDim Duties(0)
+DutyCount = 0
+
+TotalRestDuration = 0
+MaxDuty = 0
+MinDuty = 2500
+MaxRest = 0
+MinRest = 2500
+TotalWorkDays = 0
+TotalDurationOfwork = 0
+If Not Sort_Schedule Then
+    MsgBox "Problem with sorting schedule"
+    Exit Sub
+End If
+Do While Not IsEmpty(Cells(RowCounter, 1))
+    RowCounter = RowCounter + 1
+Loop
+RowNumber = RowCounter - 1
+If RowNumber >= 11 Then
+    If DateDiff("d", Cells(11, 1).Value, Cells(RowNumber, 1)) > 800 Then
+        x = MsgBox(CStr(DateDiff("d", Cells(11, 1).Value, Cells(RowNumber, 1))) + " days in this schedule. Continue?", vbYesNo)
+        If x = vbNo Then
+            Exit Sub
+        End If
+    End If
+    For RowCounter = 11 To RowNumber
+        StartTime = Int(CDate(Cells(RowCounter, 1))) + CDate(Cells(RowCounter, 2).Value)
+        Endtime = Int(CDate(Cells(RowCounter, 1))) + CDate(Cells(RowCounter, 3).Value)
+        StartHrs = (DateDiff("s", #12:00:00 AM#, CDate(Cells(RowCounter, 2))) / 3600)
+        Endhrs = (DateDiff("s", #12:00:00 AM#, CDate(Cells(RowCounter, 3))) / 3600)
+        If Endtime < StartTime Then
+            'finished on next day
+            Endtime = Endtime + 1
+        End If
+        ' add into an array
+        DutyLength = (Endtime - StartTime) * 24
+        If DutyLength <= 0 Then
+            MsgBox "Invalid duty length on row " + CStr(RowCounter)
+        End If
+        If DutyLength > MaxDuty Then MaxDuty = DutyLength
+        If DutyLength < MinDuty Then MinDuty = DutyLength
+        DutyCount = DutyCount + 1
+        'time in decimal hours
+        If DutyLength > 12.001 Then
+                Cells(RowCounter, 6).Font.Bold = True
+                Cells(RowCounter, 6) = HoursMin(DutyLength)
+        Else
+                Cells(RowCounter, 6).Font.Bold = False
+                Cells(RowCounter, 6) = HoursMin(DutyLength)
+        End If
+        If DutyCount = 1 Then
+            ScheduleStart = Int(StartTime)
+            RestLength = 0
+            RestLength = DateDiff("n", ScheduleStart, StartTime) / 60
+        Else
+            RestLength = DateDiff("n", Duties(DutyCount - 1).OffDuty, StartTime) / 60
+            If RestLength > MaxRest Then MaxRest = RestLength
+            If RestLength < MinRest Then MinRest = RestLength
+        End If
+        If Int(Endtime) = Endtime Then
+            TotalWorkDays = (Int(Endtime) - ScheduleStart)
+        Else
+            TotalWorkDays = (Int(Endtime) - ScheduleStart) + 1
+        End If
+        TotalDurationOfwork = TotalDurationOfwork + DutyLength
+        Cells(RowCounter, 8) = HoursMin(TotalDurationOfwork / TotalWorkDays)
+        If RestLength <= 0 And DutyCount > 1 Then
+            MsgBox "Invalid rest length on row " + CStr(RowCounter)
+        End If
+        If DutyCount = 1 Then
+            Cells(RowCounter, 7) = "Fully Rested"
+        Else
+            If RestLength < 12 Then
+                    Cells(RowCounter, 7).Font.Bold = True
+                    Cells(RowCounter, 7) = HoursMin(RestLength)
+            Else
+                    Cells(RowCounter, 7).Font.Bold = False
+                    Cells(RowCounter, 7) = HoursMin(RestLength)
+            End If
+        End If
+        If RowCounter = RowNumber Then
+            'last row, need to add on rest until midnight on last day
+            RestLength = RestLength + DateDiff("n", Endtime, Int(Endtime) + 1) / 60
+        End If
+        TotalRestDuration = TotalRestDuration + RestLength
+        d = DutyFactor(DutyLength, Cells(RowCounter, 20), Cells(RowCounter, 21), Cells(RowCounter, 22), Cells(RowCounter, 23), Cells(RowCounter, 24), Cells(RowCounter, 25))
+        If Worksheets("Schedule").ToggleButton1.Value = True Then
+            'Risk
+            Cells(RowCounter, 10).Value = (AssociatedRisk(StartHrs, Endhrs, Cells(RowCounter, 19)) / 1.288) * 0.997976
+            Cells(RowCounter, 11).Value = (d.RiskFactor / 1.032) / 1.0286182
+        Else
+            'Fatigue
+            Pt = ThreeProcessEstimation(StartHrs, DutyLength, d.FatigueFactor, Cells(RowCounter, 19))
+            P0 = ThreeProcessEstimation(StartHrs, DutyLength, 0.14, Cells(RowCounter, 19))
+            If P0 > Pt Then
+                P0 = Pt
+            End If
+            Cells(RowCounter, 10).Value = (P0 * 100)
+            Cells(RowCounter, 11).Value = (Pt - P0) * 100
+            
+        End If
+        ReDim Preserve Duties(DutyCount)
+        Duties(DutyCount).StartDay = DateDiff("d", ScheduleStart, Int(StartTime)) + 1
+        Duties(DutyCount).OnDuty = StartTime
+        Duties(DutyCount).OffDuty = Endtime
+    Next RowCounter
+    Cumulative (DutyCount)
+    For n = 1 To DutyCount
+        If Worksheets("Schedule").ToggleButton1.Value = True Then
+            Cells(n + 10, CumulativeCol).Value = Duties(n).Cumulative.RiskFactor * 0.98899
+        Else
+            Cells(n + 10, CumulativeCol).Value = Round((Duties(n).Cumulative.FatigueFactor * 100), 2)
+        End If
+    Next n
+    If DutyCount > 0 Then
+        ScheduleLength = DateDiff("d", ScheduleStart, Duties(DutyCount).OffDuty)
+         If Worksheets("Schedule").ToggleButton1.Value = True Then
+            'Risk
+            Cells(10, FatigueCol) = "Risk Index"
+            Cells(11, FatigueCol).Formula = "=(I11*J11*K11)"
+            Cells(11, FatigueCol).NumberFormat = "0.00"
+            Range("I11:K" + CStr(RowCounter)).NumberFormat = "0.00"
+        Else
+            'Fatigue
+            Cells(10, FatigueCol) = "Fatigue Index"
+            Cells(11, FatigueCol).Formula = "=100*(1-(1-(I11/100))*(1-(J11/100)-(K11/100)))"
+            Cells(11, FatigueCol).NumberFormat = "##0.0"
+            Range("I11:K" + CStr(RowCounter)).NumberFormat = "##0.0"
+        End If
+        
+        Cells(11, FatigueCol).Font.Bold = True
+        Cells(11, FatigueCol).HorizontalAlignment = xlHAlignCenter
+        If RowCounter > 12 Then
+            Range("L11:L" + CStr(RowNumber)).FillDown
+        End If
+        With Range("A11:C" + CStr(RowNumber))
+            .Interior.Color = RGB(255, 255, 255)
+            .Font.Color = 0
+        End With
+        With Range("D11:E" + CStr(RowNumber))
+            .Interior.Color = RGB(164, 234, 244)
+            .Font.Color = 0
+        End With
+        TotalDutyIndex = 0
+        TotalIndex = 0
+        For n = 11 To RowNumber
+            TotalDutyIndex = TotalDutyIndex + ((Duties(n - 10).OffDuty - Duties(n - 10).OnDuty) * 24)
+            TotalIndex = TotalIndex + (((Duties(n - 10).OffDuty - Duties(n - 10).OnDuty) * 24) * Cells(n, 12))
+        Next n
+       ' Cells(RowNumber + 1, 12).Formula = "=AVERAGE(L11:L" + CStr(RowNumber) + ")"
+       ' Cells(RowNumber + 1, 11).Formula = "=AVERAGE(K11:K" + CStr(RowNumber) + ")"
+       ' Cells(RowNumber + 1, 10).Formula = "=AVERAGE(J11:J" + CStr(RowNumber) + ")"
+       ' Cells(RowNumber + 1, 9).Formula = "=AVERAGE(I11:I" + CStr(RowNumber) + ")"
+        'Range("A" + CStr(RowNumber + 1) + ":L" + CStr(RowNumber + 1)).NumberFormat = "0.0000000"
+        With Worksheets("Summary")
+        'do labels first
+            'duties
+            .Cells(8, 1) = "Duty count"
+            .Cells(9, 1) = "Total duty duration"
+            .Cells(10, 1) = "Average duty length"
+            .Cells(11, 1) = "Minimum duty length"
+            .Cells(12, 1) = "Maximum duty length"
+            'Rest
+            .Cells(13, 1) = "Schedule length"
+            .Cells(14, 1) = "Total rest length"
+            .Cells(15, 1) = "Minimum rest length"
+            .Cells(16, 1) = "Maximum rest length"
+            'Copy over names etc
+            .Cells(2, 3) = Cells(4, 2)
+            .Cells(3, 3) = Cells(5, 2)
+            .Cells(4, 3) = Cells(6, 2)
+            .Cells(5, 3) = Cells(7, 2)
+            .Cells(6, 3) = Cells(4, 10)
+            'Populate
+            .Cells(8, 4) = DutyCount
+            .Cells(9, 4) = HoursMin(TotalDutyIndex)
+            
+            If DutyCount > 0 Then
+                .Cells(10, 4) = HoursMin(TotalDutyIndex / DutyCount)
+                .Cells(11, 4) = HoursMin(MinDuty)
+                .Cells(12, 4) = HoursMin(MaxDuty)
+            Else
+                .Cells(10, 4) = "No Duties"
+                .Cells(11, 4) = "No Duties"
+                .Cells(12, 4) = "No Duties"
+            End If
+            
+            If ScheduleLength > 0 Then
+                '.Cells(13, 4) = HoursMin(DateDiff("n", Duties(1).OnDuty, Duties(DutyCount).OffDuty) / 60)
+                .Cells(13, 4) = HoursMin(DateDiff("n", ScheduleStart, Int(Duties(DutyCount).OffDuty) + 1) / 60)
+                .Cells(14, 4) = HoursMin(TotalRestDuration)
+                .Cells(15, 4) = HoursMin(MinRest)
+                .Cells(16, 4) = HoursMin(MaxRest)
+            Else
+                .Cells(13, 4) = "No Rest"
+                .Cells(14, 4) = "No Rest"
+                .Cells(15, 4) = "No Rest"
+                .Cells(16, 4) = "No Rest"
+            End If
+            If DutyCount > 0 Then
+                If Worksheets("Schedule").ToggleButton1.Value = False Then
+                    .Cells(21, 1) = "Average fatigue"
+                    .Cells(22, 1) = "Minimum fatigue"
+                    .Cells(23, 1) = "Maximum fatigue"
+                    .Cells(21, 4).Value = Round(TotalIndex / TotalDutyIndex, 1)
+                    .Range("D21:D25").NumberFormat = "##0.0"
+                Else
+                    .Cells(21, 1) = "Average risk"
+                    .Cells(22, 1) = "Minimum risk"
+                    .Cells(23, 1) = "Maximum risk"
+                    .Cells(21, 4).Value = Round(TotalIndex / TotalDutyIndex, 2)
+                    .Range("D21:D25").NumberFormat = "0.000"
+                End If
+                
+                .Cells(22, 4).Formula = "=MIN(Schedule!L11:L" + CStr(RowNumber) + ")"
+                .Cells(23, 4).Formula = "=MAX(Schedule!L11:L" + CStr(RowNumber) + ")"
+            Else
+                .Cells(21, 4) = "No Duties"
+                .Cells(22, 4) = "No Duties"
+                .Cells(23, 4) = "No Duties"
+            End If
+            .Cells(27, 1) = "The workload and/or work pace of the job is typically:"
+            Select Case Worksheets("Constants").Cells(18, 1)
+                Case Is = 3
+                    .Cells(27, 4) = "Extremely demanding, no spare capacity"
+                Case Is = 2
+                    .Cells(27, 4) = "Moderately demanding, little spare capacity"
+                Case Is = 1
+                    .Cells(27, 4) = "Moderately undemanding, some spare capacity."
+                Case Is = 0
+                    .Cells(27, 4) = "Extremely undemanding, lots of spare capacity."
+            End Select
+            .Cells(28, 1) = "The job typically requires continuous attention:"
+            Select Case Worksheets("Constants").Cells(19, 1)
+                Case Is = 3
+                    .Cells(28, 4) = "All or nearly all the time"
+                Case Is = 2
+                    .Cells(28, 4) = "Most of the time"
+                Case Is = 1
+                    .Cells(28, 4) = "Some of the time"
+                Case Is = 0
+                    .Cells(28, 4) = "Rarely or nearly none of the time"
+            End Select
+            .Cells(29, 1) = "How frequently are rest breaks typically provided OR taken?"
+            .Cells(30, 1) = "What is the typical average length of these breaks that are provided or taken?"
+            .Cells(31, 1) = "What is typically the longest period of continuous work before a break?"
+            .Cells(32, 1) = "What is typically the length of the break taken after this longest period of continuous work?"
+            .Cells(33, 1) = "What is the typical commuting time of employees to OR from work."
+            .Cells(29, 4) = HoursMin(Worksheets("Constants").Cells(20, 1).Value / 60)
+            .Cells(30, 4) = HoursMin(Worksheets("Constants").Cells(21, 1).Value / 60)
+            .Cells(31, 4) = HoursMin(Worksheets("Constants").Cells(22, 1).Value / 60)
+            .Cells(32, 4) = HoursMin(Worksheets("Constants").Cells(23, 1).Value / 60)
+            .Cells(33, 4) = HoursMin(Worksheets("Constants").Cells(24, 1).Value / 60)
+            .Range("D8:D33").HorizontalAlignment = xlHAlignCenter
+            .Range("D27:D28").VerticalAlignment = xlDistributed
+        End With
+        'update schedule display and graphs
+        If Worksheets("Schedule").CheckBox1.Value = True Then
+            Call Draw(ScheduleStart, ScheduleLength, DutyCount)
+        End If
+        If Worksheets("Schedule").CheckBox2.Value = True Then
+            Call ChartData(ScheduleLength + 1)
+        Else
+            Worksheets("Charts").Cells.ClearContents
+            Worksheets("Charts").UsedRange
+            If Worksheets("Charts").ChartObjects.Count > 0 Then
+                Worksheets("Charts").ChartObjects.Select
+                Worksheets("Charts").ChartObjects.Delete
+            End If
+        End If
+        
+        Worksheets("Schedule").Activate
+    End If
+End If
+Application.EnableEvents = True
+Application.ScreenUpdating = True
+Exit Sub
+problem:
+MsgBox "Problem in calculation"
+Application.EnableEvents = True
+Application.ScreenUpdating = True
+
+End Sub
+Function Validate() As Boolean
+Dim RowCounter As Long
+Dim RowNumber As Long
+Dim DayData As Single
+Dim t As String
+Dim c
+Dim n As Long
+Dim x As VbMsgBoxResult
+Application.EnableEvents = False
+Application.ScreenUpdating = False
+RowCounter = 11
+On Error GoTo wobble
+Validate = True
+
+Worksheets("Schedule").Activate
+
+Do While Not IsEmpty(Cells(RowCounter, 1))
+    RowCounter = RowCounter + 1
+Loop
+RowNumber = RowCounter - 1
+For RowCounter = 11 To RowNumber
+    c = Cells(RowCounter, 1)
+    If Not IsDate(c) And Not IsNumeric(c) Then
+        Validate = False
+        MsgBox "Invalid date / day format on row " + CStr(RowCounter)
+        Exit Function
+    End If
+    DayData = CDate(c)
+    If RowCounter = RowNumber Then
+        If CDate(DayData) > 10000 Then
+            Range("A11:A" + CStr(RowNumber + 20)).NumberFormat = "@"
+        Else
+            Range("A11:A" + CStr(RowNumber + 20)).NumberFormat = "0"
+        End If
+    End If
+    t = FormatInput(2, Cells(RowCounter, 2))
+    If t = vbNullString Then
+        If UCase(Cells(RowCounter, 2)) = "R" Then
+            Range("A" + CStr(RowCounter) + ":C" + CStr(RowCounter)).Value = vbNullString
+        Else
+            Validate = False
+        End If
+    Else
+        Cells(RowCounter, 2) = t
+    End If
+    t = FormatInput(2, Cells(RowCounter, 3))
+    If t = vbNullString And Cells(RowCounter, 3) <> vbNullString Then
+        Validate = False
+    Else
+        Cells(RowCounter, 3) = t
+    End If
+    If Not IsEmpty(Cells(RowCounter, 1)) Then
+        With Worksheets("Constants")
+            If IsEmpty(Cells(RowCounter, 4)) Then
+                'no default or individual, assume defaults
+                Cells(RowCounter, 20) = .Cells(18, 1)
+                Cells(RowCounter, 21) = .Cells(19, 1)
+                Cells(RowCounter, 22) = .Cells(20, 1)
+                Cells(RowCounter, 23) = .Cells(21, 1)
+                Cells(RowCounter, 24) = .Cells(22, 1)
+                Cells(RowCounter, 25) = .Cells(23, 1)
+            End If
+            If IsEmpty(Cells(RowCounter, 5)) Then
+                'no default or individual, assume defaults
+                Cells(RowCounter, 19) = .Cells(24, 1)
+            End If
+            If IsEmpty(Cells(RowCounter, 19)) Then
+                Cells(RowCounter, 19) = .Cells(24, 1)
+            End If
+            If IsEmpty(Cells(RowCounter, 20)) Then
+                Cells(RowCounter, 20) = .Cells(18, 1)
+            End If
+            If IsEmpty(Cells(RowCounter, 21)) Then
+                Cells(RowCounter, 21) = .Cells(19, 1)
+            End If
+            If IsEmpty(Cells(RowCounter, 22)) Then
+                Cells(RowCounter, 22) = .Cells(20, 1)
+            End If
+            If IsEmpty(Cells(RowCounter, 23)) Then
+                Cells(RowCounter, 23) = .Cells(21, 1)
+            End If
+            If IsEmpty(Cells(RowCounter, 24)) Then
+                Cells(RowCounter, 24) = .Cells(22, 1)
+            End If
+            If IsEmpty(Cells(RowCounter, 25)) Then
+                Cells(RowCounter, 25) = .Cells(23, 1)
+            End If
+            If Cells(RowCounter, 20) = .Cells(18, 1) And Cells(RowCounter, 21) = .Cells(19, 1) And Cells(RowCounter, 22) = .Cells(20, 1) And Cells(RowCounter, 23) = .Cells(21, 1) And Cells(RowCounter, 24) = .Cells(22, 1) And Cells(RowCounter, 25) = .Cells(23, 1) Then
+                Cells(RowCounter, 4) = "Default"
+            Else
+                Cells(RowCounter, 4) = "Individual"
+            End If
+            If Cells(RowCounter, 19) = .Cells(24, 1) Then
+                Cells(RowCounter, 5) = "Default"
+            Else
+                Cells(RowCounter, 5) = "Individual"
+            End If
+        End With
+    End If
+Next RowCounter
+UnDraw
+If RowNumber >= 11 Then
+    With Range("F11:L" + CStr(RowNumber))
+        .Interior.Color = RGB(169, 179, 185)
+        .Font.Color = 0
+    End With
+    With Range("D11:E" + CStr(RowNumber))
+        .Interior.Color = RGB(164, 234, 244)
+        .Font.Color = 0
+    End With
+    Range("F11:L" + CStr(LastCell(Sheet1).Row)).ClearContents
+    Worksheets("Summary").Range("D8:D19,D21:D25").ClearContents
+End If
+With Range("A11:L" + CStr(RowNumber))
+     .Borders.LineStyle = xlContinuous
+End With
+Range("A11:L" + CStr(RowNumber)).HorizontalAlignment = xlHAlignCenter
+'
+Application.EnableEvents = True
+Application.ScreenUpdating = True
+
+Exit Function
+wobble:
+Application.ScreenUpdating = True
+Application.EnableEvents = True
+Validate = False
+On Error GoTo 0
+MsgBox "Invalid data on row " + CStr(RowCounter)
+Validate = False
+End Function
+
+Function LastCell(ws As Worksheet) As Range
+  Dim LastRow&, LastCol%
+
+' Error-handling is here in case there is not any
+' data in the worksheet
+
+  On Error Resume Next
+
+  With ws
+
+  ' Find the last real row
+
+    LastRow& = .Cells.Find(What:="*", _
+      SearchDirection:=xlPrevious, _
+      SearchOrder:=xlByRows).Row
+
+  ' Find the last real column
+
+    LastCol% = .Cells.Find(What:="*", _
+      SearchDirection:=xlPrevious, _
+      SearchOrder:=xlByColumns).Column
+
+  End With
+
+' Finally, initialize a Range object variable for
+' the last populated row.
+
+  Set LastCell = ws.Cells(LastRow&, LastCol%)
+
+End Function
+
+
+Sub wob()
+ChartData (1)
+End Sub
